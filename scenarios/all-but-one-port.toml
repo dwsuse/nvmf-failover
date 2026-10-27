@@ -1,0 +1,20 @@
+# All host ports but one go down at once for longer than dev_loss_tmo: the
+# last port must keep the subsystem reachable, and every path must come
+# back afterwards. Twice.
+name = "all host ports but one down beyond dev_loss_tmo"
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-port"
+pick = "all-but-one"
+duration = "dev_loss_tmo + 30s"
+gap = "until-recovered"
+repeat = 2
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "300s"
+reconnected_by = "discoverd"

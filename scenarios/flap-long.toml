@@ -1,0 +1,20 @@
+# One port goes down for longer than dev_loss_tmo and is back for only
+# 30 s before it goes down again: nvme-discoverd must reconnect while its
+# previous reconnect may still be running.
+name = "flap one host port beyond dev_loss_tmo, 5 times"
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-port"
+pick = "one"
+duration = "dev_loss_tmo + 10s"
+gap = "30s"
+repeat = 5
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "300s"
+reconnected_by = "discoverd"

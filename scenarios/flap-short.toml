@@ -1,0 +1,19 @@
+# One port flaps faster than dev_loss_tmo: the kernel keeps the controllers
+# and reconnects them every time; none may be deleted.
+name = "flap one host port below dev_loss_tmo, 20 times"
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-port"
+pick = "one"
+duration = "10s"
+gap = "20s"
+repeat = 20
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "120s"
+reconnected_by = "kernel"
