@@ -23,7 +23,7 @@ class Load:
     def __init__(
         self, device: str, output: Path, write: bool = False, iodepth: int = 16
     ) -> None:
-        self.output = output
+        self.output, self.device = output, device
         rw = "randrw" if write else "randread"
         self.argv = [
             "fio",

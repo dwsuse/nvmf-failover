@@ -8,22 +8,24 @@ import json
 import signal
 import sys
 import time
+import tomllib
 from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 from types import FrameType
 
-from . import __version__, powerstore
+from . import __version__, model, powerstore, resolve
 from . import config as config_mod
 from . import scenario as scenario_mod
 from .brocade import SwitchPool
 from .discover import Inventory, discover
+from .execute import Observer, execute, expectation_failures
 from .faults import FaultError
 from .load import Load, LoadResult
 from .monitor import Event, Monitor, live_by_identity
 from .ontap import OntapShell, Shell
 from .system import System
-from .topology import controllers
+from .topology import Identity, controllers
 from .verify import failed_units, verdict, wait_recovered
 
 
@@ -172,9 +174,50 @@ def _interrupt(signum: int, frame: FrameType | None) -> None:
     raise KeyboardInterrupt(f"signal {signum}")
 
 
+def _load_scenario(path: Path) -> dict[str, object]:
+    try:
+        data: dict[str, object] = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as err:
+        raise scenario_mod.ScenarioError(f"{path}: {err}") from err
+    return data
+
+
+def _plan(
+    data: dict[str, object], where: str, ctx: scenario_mod.Context, system: System
+) -> resolve.Plan:
+    """The rounds of a descriptive scenario, on this host."""
+    described = resolve.parse(data, where)
+    inv = ctx.inventory or Inventory(hostnqn=_hostnqn(system))
+    mdl = model.build(system, inv, ctx.switches, ctx.connect if ctx.switches else None)
+    timers = resolve.kernel_timers(system, mdl.select(**described.selector))
+    return resolve.resolve(described, mdl, ctx, timers)
+
+
+def cmd_plan(args: argparse.Namespace, system: System) -> int:
+    cfg = config_mod.load(args.config)
+    data = _load_scenario(args.scenario)
+    if not resolve.is_described(data):
+        print("not a descriptive scenario (no [[phase]])", file=sys.stderr)
+        return 2
+    with _context(cfg, system, with_inventory=True) as ctx:
+        print("\n".join(_plan(data, str(args.scenario), ctx, system).lines()))
+    return 0
+
+
+def _io_device(args: argparse.Namespace, system: System, nqns: list[str]) -> str:
+    if args.io != "auto":
+        return str(args.io)
+    for nqn in nqns:
+        devices: list[str] = model.namespaces(system, nqn)
+        if devices:
+            return devices[0]
+    raise scenario_mod.ScenarioError("--io auto: no namespace of the selected paths")
+
+
 def cmd_run(args: argparse.Namespace, system: System) -> int:
     cfg = config_mod.load(args.config)
-    scen = scenario_mod.load(args.scenario)
+    data = _load_scenario(args.scenario)
+    described = resolve.is_described(data)
     out = args.out / time.strftime(f"%Y%m%d-%H%M%S-{args.scenario.stem}")
     out.mkdir(parents=True)
     start = time.time()
@@ -187,35 +230,77 @@ def cmd_run(args: argparse.Namespace, system: System) -> int:
         log.flush()
 
     signal.signal(signal.SIGTERM, _interrupt)
+    failures: list[str] = []
     with _context(cfg, system, with_inventory=True) as ctx:
-        setup = scenario_mod.expand(scen.setup, ctx)
-        steps = scenario_mod.expand(scen.steps, ctx)
+        if described:
+            plan = _plan(data, str(args.scenario), ctx, system)
+            name, recover_timeout = plan.name, plan.recover_timeout
+            baseline = {
+                p.ctrl.identity: [p.ctrl.name]
+                for p in plan.paths
+                if p.ctrl.state == "live"
+            }
+            observer = Observer({p.ctrl.name: p.ctrl.identity for p in plan.paths})
+            nqns = sorted({p.subsysnqn for p in plan.paths})
+        else:
+            scen = scenario_mod.parse(data, str(args.scenario))
+            setup = scenario_mod.expand(scen.setup, ctx)
+            steps = scenario_mod.expand(scen.steps, ctx)
+            name, recover_timeout = scen.name, scen.recover_timeout
+            baseline = live_by_identity(system)
+            observer = None
+            nqns = sorted({ident.subsysnqn for ident in baseline})
 
-        baseline = live_by_identity(system)
+        def live() -> dict[Identity, list[str]]:
+            return {k: v for k, v in live_by_identity(system).items() if k in baseline}
+
         failed_before = failed_units(system)
-        monitor = Monitor(system, journal_units=_journal_units(args), sink=sink)
-        load = Load(args.io, out / "fio.json", write=args.io_write) if args.io else None
-        monitor.add(
-            "step",
-            f"scenario {scen.name}: {len(baseline)} live paths, "
-            f"{len(steps)} steps x {scen.repeat}",
+        monitor = Monitor(
+            system, journal_units=_journal_units(args), sink=sink, sampler=observer
         )
+        load = (
+            Load(_io_device(args, system, nqns), out / "fio.json", write=args.io_write)
+            if args.io
+            else None
+        )
+        monitor.add("step", f"scenario {name}: {len(baseline)} live paths")
+        if described:
+            for line in plan.lines():
+                monitor.add("step", line)
+        if load:
+            monitor.add("step", f"I/O on {load.device}")
         monitor.start()
         if load:
             load.start()
         runner = scenario_mod.Runner(time.sleep, lambda t: monitor.add("step", t))
         interrupted = False
+        unrecovered: list[str] = []
         try:
-            runner.run(setup, steps, scen.repeat)
+            if described:
+                unrecovered = execute(
+                    plan,
+                    runner,
+                    time.sleep,
+                    lambda t: wait_recovered(baseline, live, t)[0],
+                    lambda t: monitor.add("step", t),
+                )
+            else:
+                runner.run(setup, steps, scen.repeat)
         except KeyboardInterrupt:
             interrupted = True
             monitor.add("step", "interrupted, faults restored")
         monitor.add("step", "waiting for every path to come back")
-        recovered, seconds, now = wait_recovered(
-            baseline, lambda: live_by_identity(system), scen.recover_timeout
-        )
+        recovered, seconds, now = wait_recovered(baseline, live, recover_timeout)
         result: LoadResult | None = load.stop() if load else None
         monitor.stop()
+        if described and observer is not None:
+            failures = expectation_failures(
+                plan.expect,
+                observer,
+                result,
+                unrecovered,
+                plan.names,
+            )
 
     result_v = verdict(
         baseline,
@@ -227,10 +312,11 @@ def cmd_run(args: argparse.Namespace, system: System) -> int:
         list(runner.down),
         result,
     )
+    result_v.failures = failures
     with (out / "events.jsonl").open("w") as f:
         monitor.dump(f)
     summary = {
-        "scenario": scen.name,
+        "scenario": name,
         "passed": result_v.passed,
         "interrupted": interrupted,
         "lines": result_v.lines(),
@@ -293,9 +379,19 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_monitor)
 
+    s = sub.add_parser(
+        "plan", help="resolve a descriptive scenario and print what it would do"
+    )
+    s.add_argument("scenario", type=Path)
+    s.set_defaults(func=cmd_plan)
+
     s = sub.add_parser("run", help="run a scenario and check the recovery")
     s.add_argument("scenario", type=Path)
-    s.add_argument("--io", metavar="DEVICE", help="run fio on this namespace")
+    s.add_argument(
+        "--io",
+        metavar="DEVICE",
+        help="run fio on this namespace; auto: the first of the selected paths",
+    )
     s.add_argument(
         "--io-write",
         action="store_true",

@@ -203,6 +203,7 @@ class Plan:
     timers: dict[str, float]
     recover_timeout: float
     expect: Expect
+    names: dict[str, str] = field(default_factory=dict)  # NQN -> array name
 
     def lines(self) -> list[str]:
         out = [f"scenario {self.name}: {len(self.paths)} paths selected"]

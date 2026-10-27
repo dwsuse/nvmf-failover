@@ -64,11 +64,13 @@ class Monitor:
         interval: float = 1.0,
         journal_units: tuple[str, ...] = ("nvme-discoverd*",),
         sink: Callable[[Event], None] | None = None,
+        sampler: Callable[[list[Controller]], None] | None = None,
     ) -> None:
         self.system, self.interval = system, interval
         self.journal_units = journal_units
         self.events: list[Event] = []
         self._sink = sink
+        self._sampler = sampler
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -109,7 +111,10 @@ class Monitor:
     def _poll(self) -> None:
         last = snapshot(controllers(self.system))
         while not self._stop.wait(self.interval):
-            now = snapshot(controllers(self.system))
+            ctrls = controllers(self.system)
+            if self._sampler:
+                self._sampler(ctrls)
+            now = snapshot(ctrls)
             for line in diff(last, now):
                 self.add("path" if line.startswith("path") else "topology", line)
             last = now

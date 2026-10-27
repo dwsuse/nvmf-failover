@@ -181,3 +181,22 @@ def build(
         paths.append(Path(ctrl, by_host.get(_wwpn(ident.host_traddr)), target))
     names = {sub.nqn: sub.name for sub in inv.subsystems if sub.nqn}
     return Model(paths, hps, tps, names)
+
+
+def namespaces(system: System, subsysnqn: str) -> list[str]:
+    """The multipath namespace devices (/dev/nvmeXnY) of a subsystem."""
+    base = system.path("/sys/class/nvme-subsystem")
+    if not base.is_dir():
+        return []
+    out = []
+    for sub in sorted(base.iterdir()):
+        if system.read(f"/sys/class/nvme-subsystem/{sub.name}/subsysnqn") != subsysnqn:
+            continue
+        for child in sorted(sub.iterdir()):
+            if (
+                child.name.startswith("nvme")
+                and "n" in child.name[4:]
+                and "c" not in child.name[4:]
+            ):
+                out.append(f"/dev/{child.name}")
+    return sorted(out, key=lambda d: [int(x) for x in d[9:].split("n")])

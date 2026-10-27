@@ -20,6 +20,7 @@ class Verdict:
     new_failed_units: list[str] = field(default_factory=list)
     restore_failures: list[str] = field(default_factory=list)
     load: LoadResult | None = None
+    failures: list[str] = field(default_factory=list)  # from [expect]
 
     @property
     def passed(self) -> bool:
@@ -28,6 +29,7 @@ class Verdict:
             and not self.duplicates
             and not self.new_failed_units
             and not self.restore_failures
+            and not self.failures
             and (self.load is None or self.load.errors == 0)
         )
 
@@ -41,6 +43,7 @@ class Verdict:
             out.append(f"duplicate: {ident.short()}: {' '.join(names)}")
         out += [f"new failed unit: {unit}" for unit in self.new_failed_units]
         out += [f"restore failed: {key}" for key in self.restore_failures]
+        out += [f"expectation: {text}" for text in self.failures]
         if self.load:
             out.append(
                 f"I/O: {self.load.errors} errors, "
