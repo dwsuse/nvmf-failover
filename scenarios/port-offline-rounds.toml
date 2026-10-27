@@ -1,0 +1,21 @@
+# Each host port goes offline for longer than the TOV and comes back, one
+# after the other, while I/O runs. The controllers through the port are
+# deleted at dev_loss_tmo; after the port is back, nvme-discoverd must
+# connect them again, every round.
+name = "each host port offline 300 s, 3 rounds"
+repeat = 3
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-port"
+pick = "each"
+duration = "300s"
+gap = "300s"
+
+[expect]
+io_errors = 0
+paths_during = 1                # the other ports keep the subsystem reachable
+recovered_within = "300s"
+reconnected_by = "discoverd"

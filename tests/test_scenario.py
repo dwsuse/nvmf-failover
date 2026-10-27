@@ -1,9 +1,12 @@
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from nvmf_failover.discover import Inventory, Lif
 from nvmf_failover.faults import Fault, FaultError
+from nvmf_failover.resolve import is_described
+from nvmf_failover.resolve import parse as resolve_parse
 from nvmf_failover.scenario import (
     Context,
     Runner,
@@ -172,9 +175,13 @@ def test_ontap_steps_need_the_config(system: FakeSystem) -> None:
         expand([{"fault": "ontap-lif", "lif": "l", "action": "down"}], Context(system))
 
 
-SCENARIOS = sorted((Path(__file__).parent.parent / "scenarios").glob("*.toml"))
+SCENARIOS = sorted((Path(__file__).parent.parent / "scenarios").rglob("*.toml"))
 
 
 @pytest.mark.parametrize("path", SCENARIOS, ids=[p.stem for p in SCENARIOS])
 def test_shipped_scenarios_parse(path: Path) -> None:
-    assert load(path).steps
+    data = tomllib.loads(path.read_text())
+    if is_described(data):
+        assert resolve_parse(data, str(path)).phases
+    else:
+        assert load(path).steps

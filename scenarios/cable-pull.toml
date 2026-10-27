@@ -1,0 +1,19 @@
+# The cable of one host port is pulled: its switch port is disabled. The
+# port is found by the HBA's WWPN in the switches' name servers; a host
+# port carries only the host's own login.
+name = "pull the cable of one host port"
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-cable"
+pick = "one"
+duration = "dev_loss_tmo + 30s"
+gap = "until-recovered"
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "300s"
+reconnected_by = "discoverd"

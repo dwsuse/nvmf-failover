@@ -1,0 +1,19 @@
+# Each host port loses its link for longer than dev_loss_tmo: the kernel
+# deletes its controllers, and nvme-discoverd must connect them again when
+# the port is back.
+name = "each host port down longer than dev_loss_tmo"
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-port"
+pick = "each"
+duration = "dev_loss_tmo + 30s"
+gap = "until-recovered"
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "300s"
+reconnected_by = "discoverd"

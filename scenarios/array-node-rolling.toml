@@ -1,0 +1,18 @@
+# Every target port of one array node goes down at once, as in a node
+# failover, for each node in turn. The paths through the other nodes carry
+# the I/O (ANA moves to them); the paths must come back after each node.
+name = "rolling array node failover"
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "array-node"
+pick = "each"
+duration = "dev_loss_tmo + 30s"
+gap = "until-recovered"
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "300s"

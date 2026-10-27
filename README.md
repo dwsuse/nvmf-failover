@@ -66,7 +66,8 @@ sections. ssh host keys are trusted on first use and kept in
     nvmf-failover monitor                 # watch events until Ctrl-C
     nvmf-failover fault fc-link host3 down
     nvmf-failover fault fc-link host3 up
-    nvmf-failover run scenarios/fc-link-long.toml --io /dev/nvme21n5
+    nvmf-failover plan scenarios/host-port-long.toml
+    nvmf-failover run scenarios/host-port-long.toml --io auto
 
 A run writes `events.log`, `events.jsonl`, `summary.json` and, with
 `--io`, `fio.json` to `runs/<time>-<scenario>/`. The exit status is 0 if
@@ -77,20 +78,47 @@ namespace.
 
 ## Scenarios
 
-TOML files, see `scenarios/` and the docstring of
-`src/nvmf_failover/scenario.py`:
+A scenario says what to break by its place in the paths, not by interface
+names; `plan` shows what that means on the host at hand:
 
 ```toml
-name = "lpfc link down 60 s"
-repeat = 1
-recover_timeout = 300
+name = "each host port offline 300 s, 3 rounds"
+repeat = 3
 
-[[steps]]
-fault = "fc-link"
-host = "host3"
-action = "down"     # down, up or bounce
-hold = 60           # seconds to wait after the step
+[paths]                         # the paths the test is about
+subsystem = "*"                # glob on the name on the array or the NQN
+array = "*"                     # optional: netapp, powerstore
+node = "*"                      # optional: array node
+
+[[phase]]
+fail = "host-port"              # host-port, host-cable, target-port,
+                                # array-node, fabric
+pick = "each"                   # one, each, all-but-one, all
+duration = "dev_loss_tmo + 30s" # kernel timers: dev_loss_tmo,
+gap = "until-recovered"         # ctrl_loss_tmo, fast_io_fail_tmo
+
+[expect]
+io_errors = 0
+paths_during = 1                # live paths per subsystem, at least
+recovered_within = "300s"
+reconnected_by = "discoverd"    # kernel, discoverd or any
 ```
+
+The tool picks how to break each element: an lpfc port through its link,
+another driver's port by unbinding its PCI function, a cable or a PowerStore
+port at its switch port, a NetApp port by its LIF. `pick = "all"` needs
+`allow_outage = true`, a switch port that other hosts use too needs
+`allow_shared = true` in the phase.
+
+    nvmf-failover plan scenarios/port-offline-rounds.toml
+    nvmf-failover run scenarios/port-offline-rounds.toml --io auto
+
+See `scenarios/` for examples, and `src/nvmf_failover/resolve.py`.
+
+`scenarios/steps/` has scenarios in the low-level format: a list of steps,
+each a fault on a named target (`host = "host3"`, `lif = "..."`), an action
+(down, up, bounce) and a hold time. It is still supported, for what the
+descriptive form can't say.
 
 ## Development
 

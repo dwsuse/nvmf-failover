@@ -1,0 +1,19 @@
+# Each host port loses its link for less than dev_loss_tmo: the kernel keeps
+# the controllers and reconnects them itself. nvme-discoverd must not step
+# in, and no controller may be deleted.
+name = "each host port down shorter than dev_loss_tmo"
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-port"
+pick = "each"
+duration = "dev_loss_tmo - 20s"
+gap = "until-recovered"
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "120s"
+reconnected_by = "kernel"
