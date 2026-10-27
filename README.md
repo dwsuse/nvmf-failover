@@ -73,7 +73,9 @@ A run writes `events.log`, `events.jsonl`, `summary.json` and, with
 `--io`, `fio.json` to `runs/<time>-<scenario>/`. The exit status is 0 if
 the run passed.
 
-`--io` reads only; `--io-write` also writes and destroys the data on the
+`--io DEV` reads (repeatable; `auto`: the first namespace of the selected
+paths, `all`: every one of them). `--io-verify DEV` writes at random and
+verifies every block, and destroys the data on the
 namespace.
 
 ## Scenarios

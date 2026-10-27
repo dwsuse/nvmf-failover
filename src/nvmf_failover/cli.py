@@ -21,7 +21,7 @@ from .brocade import SwitchPool
 from .discover import Inventory, discover
 from .execute import Observer, execute, expectation_failures
 from .faults import FaultError
-from .load import Load, LoadResult
+from .load import Job, Load, LoadResult
 from .monitor import Event, Monitor, live_by_identity
 from .ontap import OntapShell, Shell
 from .system import System
@@ -204,14 +204,26 @@ def cmd_plan(args: argparse.Namespace, system: System) -> int:
     return 0
 
 
-def _io_device(args: argparse.Namespace, system: System, nqns: list[str]) -> str:
-    if args.io != "auto":
-        return str(args.io)
-    for nqn in nqns:
-        devices: list[str] = model.namespaces(system, nqn)
-        if devices:
-            return devices[0]
-    raise scenario_mod.ScenarioError("--io auto: no namespace of the selected paths")
+def _load_jobs(args: argparse.Namespace, system: System, nqns: list[str]) -> list[Job]:
+    """The fio jobs of --io (read) and --io-verify (write and verify)."""
+    jobs = []
+    for device in args.io or []:
+        if device == "all":
+            # every namespace of the selected subsystems
+            jobs += [Job(d) for nqn in nqns for d in model.namespaces(system, nqn)]
+        elif device == "auto":
+            first = next(
+                (d for nqn in nqns for d in model.namespaces(system, nqn)), None
+            )
+            if first is None:
+                raise scenario_mod.ScenarioError(
+                    "--io auto: no namespace of the selected paths"
+                )
+            jobs.append(Job(first))
+        else:
+            jobs.append(Job(device))
+    jobs += [Job(device, "verify") for device in args.io_verify or []]
+    return jobs
 
 
 def cmd_run(args: argparse.Namespace, system: System) -> int:
@@ -258,17 +270,14 @@ def cmd_run(args: argparse.Namespace, system: System) -> int:
         monitor = Monitor(
             system, journal_units=_journal_units(args), sink=sink, sampler=observer
         )
-        load = (
-            Load(_io_device(args, system, nqns), out / "fio.json", write=args.io_write)
-            if args.io
-            else None
-        )
+        jobs = _load_jobs(args, system, nqns)
+        load = Load(jobs, out / "fio.json") if jobs else None
         monitor.add("step", f"scenario {name}: {len(baseline)} live paths")
         if described:
             for line in plan.lines():
                 monitor.add("step", line)
         if load:
-            monitor.add("step", f"I/O on {load.device}")
+            monitor.add("step", f"I/O on {', '.join(load.devices)}")
         monitor.start()
         if load:
             load.start()
@@ -389,13 +398,17 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("scenario", type=Path)
     s.add_argument(
         "--io",
+        action="append",
         metavar="DEVICE",
-        help="run fio on this namespace; auto: the first of the selected paths",
+        help="read from DEVICE with fio during the run (repeatable); auto: the "
+        "first namespace of the selected paths, all: every one of them",
     )
     s.add_argument(
-        "--io-write",
-        action="store_true",
-        help="write too (destroys the data on DEVICE)",
+        "--io-verify",
+        action="append",
+        metavar="DEVICE",
+        help="write to DEVICE and verify every block (repeatable; DESTROYS "
+        "the data on DEVICE)",
     )
     s.add_argument(
         "--out",

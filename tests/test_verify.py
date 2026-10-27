@@ -183,3 +183,31 @@ def test_live_by_identity_ignores_discovery_controllers(system: FakeSystem) -> N
         cntrltype="discovery",
     )
     assert list(live_by_identity(system).values()) == [["nvme1"]]
+
+
+def test_fio_argv_one_section_per_job(tmp_path: Path) -> None:
+    from nvmf_failover.load import Job, fio_argv
+
+    argv = fio_argv([Job("/dev/a"), Job("/dev/b", "verify")], tmp_path / "f.json")
+    a, b = argv.index("--name=job0"), argv.index("--name=job1")
+    assert argv[a + 1 : b] == ["--filename=/dev/a", "--rw=randread"]
+    assert argv[b + 1 : b + 4] == [
+        "--filename=/dev/b",
+        "--rw=randwrite",
+        "--verify=crc32c",
+    ]
+    assert "--continue_on_error=all" in argv[:a]
+    with pytest.raises(ValueError, match="not one of"):
+        fio_argv([Job("/dev/a", "trim")], tmp_path / "f.json")
+
+
+def test_fio_report_sums_jobs() -> None:
+    report = json.dumps(
+        {
+            "jobs": [
+                {"total_err": 1, "read": {"io_bytes": 10}},
+                {"total_err": 2, "write": {"io_bytes": 5, "clat_ns": {"max": 3e6}}},
+            ]
+        }
+    )
+    assert parse_report(report) == LoadResult(3, 15, 3.0, 0)

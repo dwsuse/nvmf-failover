@@ -1,4 +1,10 @@
-"""I/O during a run, with fio: errors and stalls show a failed failover."""
+"""I/O during a run, with fio: errors and stalls show a failed failover.
+
+One fio process runs a job per device: "read" jobs read at random,
+"verify" jobs write at random and read every block back against its
+checksum, so data corruption shows as an error too (and destroys the
+data on the device).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,8 @@ import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+MODES = ("read", "verify")
 
 
 @dataclass(frozen=True)
@@ -17,30 +25,54 @@ class LoadResult:
     status: int
 
 
-class Load:
-    """fio reading (or writing) a namespace until stopped."""
+@dataclass(frozen=True)
+class Job:
+    device: str
+    mode: str = "read"
 
-    def __init__(
-        self, device: str, output: Path, write: bool = False, iodepth: int = 16
-    ) -> None:
-        self.output, self.device = output, device
-        rw = "randrw" if write else "randread"
-        self.argv = [
-            "fio",
-            "--name=failover",
-            f"--filename={device}",
-            f"--rw={rw}",
-            "--bs=4k",
-            "--direct=1",
-            "--ioengine=libaio",
-            f"--iodepth={iodepth}",
-            "--time_based",
-            "--runtime=7d",
-            "--output-format=json",
-            f"--output={output}",
-            "--continue_on_error=all",
-        ]
+
+def fio_argv(jobs: list[Job], output: Path, iodepth: int = 16) -> list[str]:
+    """The fio command line: global options, then one section per job."""
+    argv = [
+        "fio",
+        "--bs=4k",
+        "--direct=1",
+        "--ioengine=libaio",
+        f"--iodepth={iodepth}",
+        "--time_based",
+        "--runtime=7d",
+        "--output-format=json",
+        f"--output={output}",
+        "--continue_on_error=all",
+    ]
+    for i, job in enumerate(jobs):
+        if job.mode not in MODES:
+            raise ValueError(f"{job.mode}: not one of {', '.join(MODES)}")
+        argv += [f"--name=job{i}", f"--filename={job.device}"]
+        if job.mode == "read":
+            argv.append("--rw=randread")
+        else:
+            argv += [
+                "--rw=randwrite",
+                "--verify=crc32c",
+                "--verify_backlog=4096",
+                "--verify_fatal=0",
+                "--do_verify=1",
+            ]
+    return argv
+
+
+class Load:
+    """fio on the jobs' devices until stopped."""
+
+    def __init__(self, jobs: list[Job], output: Path, iodepth: int = 16) -> None:
+        self.jobs, self.output = jobs, output
+        self.argv = fio_argv(jobs, output, iodepth)
         self._proc: subprocess.Popen[bytes] | None = None
+
+    @property
+    def devices(self) -> list[str]:
+        return [f"{j.device} ({j.mode})" for j in self.jobs]
 
     def start(self) -> None:
         self._proc = subprocess.Popen(
@@ -52,7 +84,7 @@ class Load:
         if self._proc is None:
             raise RuntimeError("load not started")
         self._proc.send_signal(signal.SIGINT)
-        status = self._proc.wait(timeout=60)
+        status = self._proc.wait(timeout=120)
         return parse_report(self.output.read_text(), status)
 
 
