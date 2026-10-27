@@ -2,6 +2,7 @@ import pytest
 
 from nvmf_failover.brocade import (
     BrocadeError,
+    find_port,
     locate,
     normalize_wwpn,
     parse_nsshow,
@@ -9,6 +10,8 @@ from nvmf_failover.brocade import (
     port_users,
     set_port,
 )
+from nvmf_failover.config import BrocadeConfig
+from nvmf_failover.faults import BrocadePortFault, FaultError
 
 # trimmed from a Brocade G620, Fabric OS v9.2.0
 SWITCHSHOW = """\
@@ -89,7 +92,7 @@ def test_parse_nsshow_entries() -> None:
 
 def test_locate_and_port_users() -> None:
     switch = FakeSwitch()
-    entry = locate(switch, "0x10000010 9be5d0be".replace(" ", ""))
+    entry = locate(switch, "0x100000109be5d0be")
     assert entry.port_index == 6
     # port 3 carries a physical port and an NPIV login: both are hit
     assert len(port_users(switch, 3)) == 2
@@ -105,3 +108,54 @@ def test_set_port_commands() -> None:
     set_port(switch, 6, enable=False)
     set_port(switch, 6, enable=True)
     assert switch.commands == ["portdisable 6", "portenable 6"]
+
+
+def _switches() -> list[BrocadeConfig]:
+    return [
+        BrocadeConfig("empty", "h1", "admin", "p"),
+        BrocadeConfig("brc", "h2", "admin", "p"),
+    ]
+
+
+class Fabric:
+    """Two switches: only "brc" has logins."""
+
+    def __init__(self) -> None:
+        self.shells = {"empty": EmptySwitch(), "brc": FakeSwitch()}
+
+    def __call__(self, cfg: BrocadeConfig) -> FakeSwitch:
+        return self.shells[cfg.name]
+
+
+class EmptySwitch(FakeSwitch):
+    def run(self, command: str) -> str:
+        self.commands.append(command)
+        return "{\n}\nThe Local Name Server has 0 entries }\n"
+
+
+def test_find_port_walks_the_switches() -> None:
+    cfg, entry, users = find_port(_switches(), Fabric(), "0x100000109be5d0be")
+    assert (cfg.name, entry.port_index, len(users)) == ("brc", 6, 1)
+
+
+def test_find_port_names_the_switches_searched() -> None:
+    with pytest.raises(BrocadeError, match="not logged in to empty, brc"):
+        find_port(_switches(), Fabric(), "0x100000109b579ef5")
+
+
+def test_port_fault_on_a_single_login_port() -> None:
+    fabric = Fabric()
+    fault = BrocadePortFault(_switches(), fabric, "10:00:00:10:9b:e5:d0:be")
+    assert fault.target == "brc/6(10:00:00:10:9b:e5:d0:be)"
+    fault.down()
+    fault.up()
+    assert fabric.shells["brc"].commands[-2:] == ["portdisable 6", "portenable 6"]
+
+
+def test_port_fault_refuses_a_shared_port() -> None:
+    with pytest.raises(FaultError, match=r"port 3 also carries 1 other login"):
+        BrocadePortFault(_switches(), Fabric(), "10:00:00:10:9b:ee:0b:ab")
+    forced = BrocadePortFault(
+        _switches(), Fabric(), "10:00:00:10:9b:ee:0b:ab", force=True
+    )
+    assert forced.others == ["c0:50:76:0c:89:e2:00:02"]

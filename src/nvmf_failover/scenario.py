@@ -27,8 +27,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .brocade import Connect
+from .config import BrocadeConfig
 from .discover import Inventory
 from .faults import (
+    BrocadePortFault,
     Fault,
     FaultError,
     FcLinkFault,
@@ -48,6 +51,7 @@ FAULT_KINDS = (
     "ontap-lif",
     "ontap-lif-cycle",
     "tcp-port",
+    "brocade-port",
 )
 
 
@@ -79,6 +83,8 @@ class Context:
     shell: Shell | None = None
     vserver: str = ""
     inventory: Inventory | None = None
+    switches: list[BrocadeConfig] = field(default_factory=list)
+    connect: Connect | None = None
 
 
 def load(path: Path) -> Scenario:
@@ -128,6 +134,7 @@ def _check_step(raw: object, where: str) -> None:
         "pci-unbind": "host",
         "ontap-lif": "lif",
         "tcp-port": "address",
+        "brocade-port": "wwpn",
     }.get(str(kind))
     if needs and needs not in raw:
         raise ScenarioError(f"{where}: {kind} needs {needs}")
@@ -144,6 +151,12 @@ def make_fault(raw: dict[str, Any], ctx: Context) -> Fault:
         return PciUnbindFault(ctx.system, raw["host"])
     if kind == "tcp-port":
         return TcpPortFault(ctx.system, raw["address"], int(raw.get("port", 4420)))
+    if kind == "brocade-port":
+        if ctx.connect is None or not ctx.switches:
+            raise FaultError("brocade-port needs [[brocade]] in the configuration")
+        return BrocadePortFault(
+            ctx.switches, ctx.connect, raw["wwpn"], bool(raw.get("force", False))
+        )
     if kind == "ontap-lif":
         if ctx.shell is None:
             raise FaultError("ontap-lif needs [ontap] in the configuration")

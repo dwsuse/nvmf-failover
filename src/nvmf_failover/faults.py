@@ -12,6 +12,8 @@ import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from .brocade import BrocadeError, Connect, find_port, set_port
+from .config import BrocadeConfig
 from .ontap import Shell, lif_admin
 from .system import System
 
@@ -251,3 +253,47 @@ class TcpPortFault(Fault):
         family, name = self.table
         data = json.loads(self.system.run(["nft", "-j", "list", "table", family, name]))
         return any("rule" in item for item in data.get("nftables", []))
+
+
+class BrocadePortFault(Fault):
+    """Disable and enable the switch port a WWPN is logged in through.
+
+    The port is looked up in the name servers of the configured switches.
+    A port that other WWPNs are logged in through as well (an array port
+    with NPIV LIFs of other hosts) is refused unless @force: disabling it
+    breaks their paths too.
+    """
+
+    kind = "brocade-port"
+
+    def __init__(
+        self,
+        switches: list[BrocadeConfig],
+        connect: Connect,
+        wwpn: str,
+        force: bool = False,
+    ) -> None:
+        try:
+            self.switch, entry, users = find_port(switches, connect, wwpn)
+        except BrocadeError as err:
+            raise FaultError(str(err)) from err
+        self.connect, self.wwpn, self.port = connect, entry.wwpn, entry.port_index
+        others = [u.wwpn for u in users if u.wwpn != entry.wwpn]
+        if others and not force:
+            raise FaultError(
+                f"{self.switch.name} port {self.port} also carries "
+                f"{len(others)} other login(s) ({', '.join(others[:4])}"
+                f"{', ...' if len(others) > 4 else ''}): set force to "
+                "disable it anyway"
+            )
+        self.others = others
+
+    @property
+    def target(self) -> str:
+        return f"{self.switch.name}/{self.port}({self.wwpn})"
+
+    def down(self) -> None:
+        set_port(self.connect(self.switch), self.port, enable=False)
+
+    def up(self) -> None:
+        set_port(self.connect(self.switch), self.port, enable=True)

@@ -21,6 +21,10 @@ NVMe-oF host.
     host, one after the other.
   - `tcp-port`: drop what a TCP target port sends (nftables, in its own
     `inet nvmf_failover` table).
+  - `brocade-port`: disable and enable the Brocade switch port a WWPN is
+    logged in through, found in the switches' name servers. A port that
+    other WWPNs use too (an array port with other hosts' NPIV logins) is
+    refused unless `force = true`.
 - **Monitoring** during a run: controller states per identity, ANA states
   per path, the nvme-discoverd journal, optionally fio I/O on a namespace.
 - **A verdict** at the end, compared with the state before the run.
@@ -50,6 +54,10 @@ user = "admin"
 password = "..."        # or password_env = "ONTAP_PASSWORD"
 vserver = "svm-name"    # default for ontap-lif
 ```
+
+See `config.toml.example` for the `[powerstore]` and `[[brocade]]`
+sections. ssh host keys are trusted on first use and kept in
+`~/.config/nvmf-failover/known_hosts`.
 
 ## Use
 

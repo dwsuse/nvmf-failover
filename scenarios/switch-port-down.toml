@@ -1,0 +1,19 @@
+# The switch port of an HBA port goes down for 60 s, longer than
+# dev_loss_tmo, as if its cable were pulled. The port is found by the
+# HBA's WWPN (here host3's) in the switches' name servers. A
+# host port carries only the host's own login; a shared array port would
+# be refused unless force = true.
+name = "switch port of host3 down 60 s"
+recover_timeout = 300
+
+[[steps]]
+fault = "brocade-port"
+wwpn = "0x100000109b579ef5"
+action = "down"
+hold = 60
+
+[[steps]]
+fault = "brocade-port"
+wwpn = "0x100000109b579ef5"
+action = "up"
+hold = 30

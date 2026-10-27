@@ -16,11 +16,12 @@ from types import FrameType
 from . import __version__
 from . import config as config_mod
 from . import scenario as scenario_mod
+from .brocade import SwitchPool
 from .discover import Inventory, discover
 from .faults import FaultError
 from .load import Load, LoadResult
 from .monitor import Event, Monitor, live_by_identity
-from .ontap import OntapShell, Shell
+from .ontap import OntapShell
 from .system import System
 from .topology import controllers
 from .verify import failed_units, verdict, wait_recovered
@@ -31,12 +32,30 @@ def _hostnqn(system: System) -> str:
 
 
 @contextlib.contextmanager
-def _shell(cfg: config_mod.Config) -> Iterator[Shell | None]:
-    if cfg.ontap is None:
-        yield None
-        return
-    with OntapShell(cfg.ontap) as shell:
-        yield shell
+def _context(
+    cfg: config_mod.Config, system: System, with_inventory: bool = False
+) -> Iterator[scenario_mod.Context]:
+    """What building faults needs; the connections are closed afterwards."""
+    pool = SwitchPool()
+    shell: OntapShell | None = OntapShell(cfg.ontap) if cfg.ontap else None
+    try:
+        inv = (
+            discover(shell, _hostnqn(system), controllers(system))
+            if shell and with_inventory
+            else None
+        )
+        yield scenario_mod.Context(
+            system,
+            shell,
+            cfg.ontap.vserver if cfg.ontap else "",
+            inv,
+            switches=cfg.brocade,
+            connect=pool,
+        )
+    finally:
+        pool.close()
+        if shell:
+            shell.close()
 
 
 def cmd_status(args: argparse.Namespace, system: System) -> int:
@@ -96,13 +115,12 @@ def cmd_fault(args: argparse.Namespace, system: System) -> int:
         raw["lif"] = args.target
         if args.vserver:
             raw["vserver"] = args.vserver
+    elif args.kind == "brocade-port":
+        raw |= {"wwpn": args.target, "force": args.force}
     else:
         address, _, port = args.target.rpartition(":")
         raw |= {"address": address, "port": port or "4420"}
-    with _shell(cfg) as shell:
-        ctx = scenario_mod.Context(
-            system, shell, cfg.ontap.vserver if cfg.ontap else ""
-        )
+    with _context(cfg, system) as ctx:
         fault = scenario_mod.make_fault(raw, ctx)
         getattr(fault, args.action)()
     print(f"{args.action} {fault.key}")
@@ -149,11 +167,7 @@ def cmd_run(args: argparse.Namespace, system: System) -> int:
         log.flush()
 
     signal.signal(signal.SIGTERM, _interrupt)
-    with _shell(cfg) as shell:
-        inv = discover(shell, _hostnqn(system), controllers(system)) if shell else None
-        ctx = scenario_mod.Context(
-            system, shell, cfg.ontap.vserver if cfg.ontap else "", inv
-        )
+    with _context(cfg, system, with_inventory=True) as ctx:
         setup = scenario_mod.expand(scen.setup, ctx)
         steps = scenario_mod.expand(scen.steps, ctx)
 
@@ -238,9 +252,14 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument(
         "kind", choices=[k for k in scenario_mod.FAULT_KINDS if k != "ontap-lif-cycle"]
     )
-    s.add_argument("target", help="hostN, LIF name, or ADDRESS[:PORT]")
+    s.add_argument("target", help="hostN, LIF name, WWPN, or ADDRESS[:PORT]")
     s.add_argument("action", choices=scenario_mod.ACTIONS)
     s.add_argument("--vserver", help="for ontap-lif, default from the config")
+    s.add_argument(
+        "--force",
+        action="store_true",
+        help="for brocade-port: disable a port other WWPNs use too",
+    )
     s.set_defaults(func=cmd_fault)
 
     s = sub.add_parser(

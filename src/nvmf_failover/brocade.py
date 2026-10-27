@@ -9,6 +9,7 @@ number from a file.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -123,6 +124,11 @@ class BrocadeShell:
             raise BrocadeError(f"{self.name}: {command}: {err}")
         return out
 
+    @property
+    def alive(self) -> bool:
+        transport = self._client.get_transport()
+        return bool(transport and transport.is_active())
+
     def close(self) -> None:
         self._client.close()
 
@@ -149,3 +155,45 @@ def port_users(shell: Shell, port_index: int) -> list[NameServerEntry]:
 
 def set_port(shell: Shell, port_index: int, enable: bool) -> None:
     shell.run(f"{'portenable' if enable else 'portdisable'} {port_index}")
+
+
+Connect = Callable[[BrocadeConfig], Shell]
+
+
+def find_port(
+    switches: list[BrocadeConfig], connect: Connect, wwpn: str
+) -> tuple[BrocadeConfig, NameServerEntry, list[NameServerEntry]]:
+    """The switch and port of @wwpn, and everything logged in through it."""
+    wanted = normalize_wwpn(wwpn)
+    for cfg in switches:
+        shell = connect(cfg)
+        entries = parse_nsshow(shell.run("nsshow"))
+        for entry in entries:
+            if entry.wwpn == wanted:
+                users = [e for e in entries if e.port_index == entry.port_index]
+                return cfg, entry, users
+    names = ", ".join(cfg.name for cfg in switches) or "no switch configured"
+    raise BrocadeError(f"{wanted}: not logged in to {names}")
+
+
+class SwitchPool:
+    """One admin connection per switch, reopened when it dropped.
+
+    A fault may hold a port down longer than the switch's idle timeout;
+    the restore must still get in.
+    """
+
+    def __init__(self) -> None:
+        self._shells: dict[str, BrocadeShell] = {}
+
+    def __call__(self, cfg: BrocadeConfig) -> Shell:
+        shell = self._shells.get(cfg.name)
+        if shell is None or not shell.alive:
+            shell = BrocadeShell(cfg, admin=True)
+            self._shells[cfg.name] = shell
+        return shell
+
+    def close(self) -> None:
+        for shell in self._shells.values():
+            shell.close()
+        self._shells.clear()
