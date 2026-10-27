@@ -172,3 +172,14 @@ def test_snapshot_reports_unidentified_by_name(system: FakeSystem) -> None:
     snap = snapshot(controllers(system))
     assert snap == {"ctrl nvme11 (not identified yet)": "connecting"}
     assert live_by_identity(system) == {}
+
+
+def test_live_by_identity_ignores_discovery_controllers(system: FakeSystem) -> None:
+    system.add_ctrl("nvme1", fc_addr("0x2019"))
+    system.add_ctrl(
+        "nvme2",
+        fc_addr("0x2019"),
+        nqn="nqn.2014-08.org.nvmexpress.discovery",
+        cntrltype="discovery",
+    )
+    assert list(live_by_identity(system).values()) == [["nvme1"]]

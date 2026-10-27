@@ -136,9 +136,14 @@ class Monitor:
 
 
 def live_by_identity(system: System) -> dict[Identity, list[str]]:
-    """The live controllers of each identity."""
+    """The live I/O controllers of each identity.
+
+    Discovery controllers don't count: nvme-discoverd disconnects one whose
+    EPCSD is 0 and reconnects it only to poll its log page, so whether it is
+    live says nothing about a path.
+    """
     out: dict[Identity, list[str]] = {}
     for ctrl in controllers(system):
-        if ctrl.state == "live" and ctrl.identified:
+        if ctrl.state == "live" and ctrl.identified and ctrl.cntrltype != "discovery":
             out.setdefault(ctrl.identity, []).append(ctrl.name)
     return out
