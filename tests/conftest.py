@@ -57,7 +57,9 @@ class FakeSystem(System):
             (base / path).mkdir()
             (base / path / "ana_state").write_text(ana + "\n")
 
-    def add_scsi_host(self, host: str, driver: str, fc: bool = True) -> None:
+    def add_scsi_host(
+        self, host: str, driver: str, fc: bool = True, wwpn: str = ""
+    ) -> None:
         scsi = self.path(f"/sys/class/scsi_host/{host}")
         scsi.mkdir(parents=True)
         (scsi / "proc_name").write_text(driver + "\n")
@@ -66,6 +68,7 @@ class FakeSystem(System):
             fch = self.path(f"/sys/class/fc_host/{host}")
             fch.mkdir(parents=True)
             (fch / "issue_lip").write_text("")
+            (fch / "port_name").write_text((wwpn or "0x0") + "\n")
 
 
 @pytest.fixture
