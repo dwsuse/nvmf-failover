@@ -77,9 +77,14 @@ def controllers(
             traddr=addr.get("traddr", ""),
             host_traddr=addr.get("host_traddr", ""),
         )
+        try:
+            children = sorted(entry.iterdir())
+        except OSError:
+            # deleted while we looked at it: a failover in progress
+            continue
         paths = {
             child.name: system.read(f"{sysfs}/{child.name}/ana_state")
-            for child in sorted(entry.iterdir())
+            for child in children
             if _PATH_RE.match(child.name)
         }
         out.append(
