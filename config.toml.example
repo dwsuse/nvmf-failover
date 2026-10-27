@@ -1,0 +1,32 @@
+# nvmf-failover configuration.
+#
+# Install it as ~/.config/nvmf-failover/config.toml (for root on the test
+# host: /root/.config/nvmf-failover/config.toml), mode 0600: it holds
+# passwords, and nvmf-failover refuses a file others can read.
+#
+# Every section is optional: without [ontap] the ONTAP faults and discover
+# are unavailable, and so on.
+
+# NetApp ONTAP cluster: discover, ontap-lif, ontap-lif-cycle
+[ontap]
+host = "10.161.56.230"
+user = "admin"
+password = ""                     # or password_env = "ONTAP_PASSWORD"
+vserver = "nvme-svm-dolin-lpfc"   # default vserver of the ontap-lif fault
+
+# Dell PowerStore: discover (REST API, https://HOST/api/rest)
+[powerstore]
+host = "10.161.56.80"
+user = "admin"
+password = ""                     # or password_env = "POWERSTORE_PASSWORD"
+verify_tls = false                # the array has a self-signed certificate
+
+# Brocade FC switches: discover (where each WWPN is plugged in) and the
+# brocade-port fault. One [[brocade]] table per switch.
+[[brocade]]
+name = "RD-LABS-BRC2"             # G620, domain 0x60
+host = "10.161.56.210"
+user = "admin"                    # portdisable/portenable need admin
+password = ""
+read_user = "user"                # optional: a read-only account for
+read_password = ""                # discover, so it never logs in as admin

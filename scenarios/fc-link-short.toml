@@ -1,0 +1,17 @@
+# A host port loses its link for less than the remote ports' dev_loss_tmo
+# (30 s on dolin): the kernel keeps the controllers and reconnects them
+# itself. nvme-discoverd should not step in.
+name = "host port link down 10 s"
+recover_timeout = 120
+
+[[steps]]
+fault = "fc-link"
+host = "host3"
+action = "down"
+hold = 10
+
+[[steps]]
+fault = "fc-link"
+host = "host3"
+action = "up"
+hold = 30

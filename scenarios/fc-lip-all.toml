@@ -1,0 +1,15 @@
+# A link reset (LIP) on each port, one after the other.
+name = "LIP every port"
+recover_timeout = 180
+
+[[steps]]
+fault = "fc-lip"
+host = "host2"
+action = "bounce"
+hold = 30
+
+[[steps]]
+fault = "fc-lip"
+host = "host3"
+action = "bounce"
+hold = 30

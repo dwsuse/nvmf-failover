@@ -1,0 +1,11 @@
+# Each LIF of the vserver that carries a path of this host goes down for
+# 20 s and up for 20 s, one after the other. The LIFs come from the array
+# (nvmf-failover discover), not from this file.
+name = "LIF cycle"
+repeat = 2
+recover_timeout = 300
+
+[[steps]]
+fault = "ontap-lif-cycle"
+vserver = "svm1"
+hold = 20

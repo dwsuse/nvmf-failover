@@ -1,0 +1,16 @@
+# For a driver that can't hold a link down: unbind the port's PCI function. The
+# port and all its controllers disappear until the rebind.
+name = "host port unbound 60 s"
+recover_timeout = 300
+
+[[steps]]
+fault = "pci-unbind"
+host = "host2"
+action = "down"
+hold = 60
+
+[[steps]]
+fault = "pci-unbind"
+host = "host2"
+action = "up"
+hold = 30
