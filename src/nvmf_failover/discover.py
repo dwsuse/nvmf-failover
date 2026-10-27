@@ -44,6 +44,7 @@ class Inventory:
     paths: dict[tuple[str, str], list[str]] = field(default_factory=dict)
 
     def vservers(self) -> list[str]:
+        """The vservers (PowerStore: clusters) that know this host."""
         return sorted({sub.vserver for sub in self.subsystems})
 
     def host_lifs(self, vserver: str | None = None) -> list[Lif]:

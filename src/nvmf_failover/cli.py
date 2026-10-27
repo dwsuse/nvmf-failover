@@ -13,7 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from types import FrameType
 
-from . import __version__
+from . import __version__, powerstore
 from . import config as config_mod
 from . import scenario as scenario_mod
 from .brocade import SwitchPool
@@ -21,7 +21,7 @@ from .discover import Inventory, discover
 from .faults import FaultError
 from .load import Load, LoadResult
 from .monitor import Event, Monitor, live_by_identity
-from .ontap import OntapShell
+from .ontap import OntapShell, Shell
 from .system import System
 from .topology import controllers
 from .verify import failed_units, verdict, wait_recovered
@@ -29,6 +29,23 @@ from .verify import failed_units, verdict, wait_recovered
 
 def _hostnqn(system: System) -> str:
     return system.read("/etc/nvme/hostnqn")
+
+
+def _inventory(
+    cfg: config_mod.Config, shell: Shell | None, hostnqn: str, system: System
+) -> Inventory:
+    """What every configured array knows about this host."""
+    ctrls = controllers(system)
+    inv = discover(shell, hostnqn, ctrls) if shell else Inventory(hostnqn=hostnqn)
+    if cfg.powerstore:
+        sub, ports, paths = powerstore.discover(
+            powerstore.PowerStoreApi(cfg.powerstore), hostnqn, ctrls
+        )
+        if sub:
+            inv.subsystems.append(sub)
+            inv.lifs += ports
+            inv.paths |= paths
+    return inv
 
 
 @contextlib.contextmanager
@@ -40,9 +57,7 @@ def _context(
     shell: OntapShell | None = OntapShell(cfg.ontap) if cfg.ontap else None
     try:
         inv = (
-            discover(shell, _hostnqn(system), controllers(system))
-            if shell and with_inventory
-            else None
+            _inventory(cfg, shell, _hostnqn(system), system) if with_inventory else None
         )
         yield scenario_mod.Context(
             system,
@@ -72,11 +87,16 @@ def cmd_status(args: argparse.Namespace, system: System) -> int:
 
 def cmd_discover(args: argparse.Namespace, system: System) -> int:
     cfg = config_mod.load(args.config)
-    if cfg.ontap is None:
-        print("no [ontap] in the configuration", file=sys.stderr)
+    if cfg.ontap is None and cfg.powerstore is None:
+        print("no [ontap] or [powerstore] in the configuration", file=sys.stderr)
         return 2
-    with OntapShell(cfg.ontap) as shell:
-        inv = discover(shell, args.hostnqn or _hostnqn(system), controllers(system))
+    hostnqn = args.hostnqn or _hostnqn(system)
+    shell = OntapShell(cfg.ontap) if cfg.ontap else None
+    try:
+        inv = _inventory(cfg, shell, hostnqn, system)
+    finally:
+        if shell:
+            shell.close()
     if args.json:
         print(json.dumps(_inventory_json(inv), indent=2))
         return 0
