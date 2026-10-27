@@ -111,10 +111,15 @@ class Monitor:
     def _poll(self) -> None:
         last = snapshot(controllers(self.system))
         while not self._stop.wait(self.interval):
-            ctrls = controllers(self.system)
-            if self._sampler:
-                self._sampler(ctrls)
-            now = snapshot(ctrls)
+            try:
+                ctrls = controllers(self.system)
+                if self._sampler:
+                    self._sampler(ctrls)
+                now = snapshot(ctrls)
+            except Exception as err:  # noqa: BLE001 -- the monitor must survive
+                # sysfs changes under a failover; a dead monitor loses the run
+                self.add("monitor", f"poll failed, retrying: {err!r}")
+                continue
             for line in diff(last, now):
                 self.add("path" if line.startswith("path") else "topology", line)
             last = now

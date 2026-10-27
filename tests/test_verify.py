@@ -7,7 +7,7 @@ import pytest
 from nvmf_failover.config import ConfigError, load
 from nvmf_failover.load import LoadResult, parse_report
 from nvmf_failover.monitor import diff, live_by_identity, snapshot
-from nvmf_failover.topology import Identity, controllers
+from nvmf_failover.topology import Controller, Identity, controllers
 from nvmf_failover.verify import failed_units, verdict, wait_recovered
 
 from conftest import FakeSystem, fc_addr
@@ -211,3 +211,25 @@ def test_fio_report_sums_jobs() -> None:
         }
     )
     assert parse_report(report) == LoadResult(3, 15, 3.0, 0)
+
+
+def test_monitor_survives_a_failing_poll(system: FakeSystem) -> None:
+    import time as _time
+
+    from nvmf_failover.monitor import Monitor
+
+    calls: list[int] = []
+
+    def sampler(ctrls: list[Controller]) -> None:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise FileNotFoundError("/sys/class/nvme/nvme17")
+
+    monitor = Monitor(system, interval=0.01, journal_units=(), sampler=sampler)
+    monitor.start()
+    deadline = _time.time() + 2
+    while len(calls) < 3 and _time.time() < deadline:
+        _time.sleep(0.01)
+    monitor.stop()
+    assert len(calls) >= 3  # still polling after the failure
+    assert any(e.source == "monitor" and "nvme17" in e.text for e in monitor.events)

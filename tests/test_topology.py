@@ -1,3 +1,8 @@
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
 from nvmf_failover.topology import Identity, by_identity, controllers
 
 from conftest import NQN, FakeSystem, fc_addr
@@ -60,3 +65,20 @@ def test_connecting_controller_is_not_identified(system: FakeSystem) -> None:
     (ctrl,) = controllers(system)
     assert not ctrl.identified
     assert ctrl.identity.subsysnqn == "" and ctrl.cntrltype == ""
+
+
+def test_controller_deleted_during_the_scan_is_skipped(
+    system: FakeSystem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    system.add_ctrl("nvme1", fc_addr("0x201900a09890f5bf"))
+    system.add_ctrl("nvme2", fc_addr("0x201800a09890f5bf"))
+    real = Path.iterdir
+
+    def iterdir(self: Path) -> Iterator[Path]:
+        # the kernel deletes nvme2 between listing /sys/class/nvme and here
+        if self.name == "nvme2":
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    assert [c.name for c in controllers(system)] == ["nvme1"]
