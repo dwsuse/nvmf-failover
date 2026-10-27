@@ -59,6 +59,7 @@ def inventory() -> Inventory:
 def world(system: FakeSystem) -> None:
     system.add_scsi_host("host3", "lpfc", wwpn=H3)
     system.add_scsi_host("host2", "(null)", wwpn=H2)
+    system.add_pci("host2", "0000:81:00.0", "qla2xxx")
     system.add_ctrl("nvme1", fc("0x201800a09890f5bf", H3), nqn=NETAPP)
     system.add_ctrl("nvme2", fc("0x201900a09890f5bf", H3), nqn=NETAPP)
     system.add_ctrl("nvme3", fc("0x201800a09890f5bf", H2), nqn=NETAPP)

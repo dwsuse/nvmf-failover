@@ -70,6 +70,18 @@ class FakeSystem(System):
             (fch / "issue_lip").write_text("")
             (fch / "port_name").write_text((wwpn or "0x0") + "\n")
 
+    def add_pci(self, host: str, pci: str, driver: str) -> None:
+        """Put scsi host @host on PCI function @pci, bound to @driver."""
+        dev = self.path(f"/sys/devices/pci0000:80/{pci}/{host}")
+        dev.mkdir(parents=True)
+        drv = self.path(f"/sys/bus/pci/drivers/{driver}")
+        drv.mkdir(parents=True, exist_ok=True)
+        devices = self.path("/sys/bus/pci/devices")
+        devices.mkdir(parents=True, exist_ok=True)
+        (devices / pci).symlink_to(dev.parent)
+        (dev.parent / "driver").symlink_to(drv)
+        (self.path(f"/sys/class/scsi_host/{host}") / "device").symlink_to(dev)
+
 
 @pytest.fixture
 def system(tmp_path: Path) -> FakeSystem:
