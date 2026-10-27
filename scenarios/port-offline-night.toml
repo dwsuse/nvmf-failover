@@ -1,0 +1,20 @@
+# A night of offline cycles: every host port in turn goes offline for longer
+# than the TOV and comes back, twelve rounds over all ports. Run it with
+# heavy I/O on all namespaces and LUNs (--io all, --io-verify).
+name = "night: each host port offline 300 s, 12 rounds"
+repeat = 12
+
+[paths]
+subsystem = "*"
+
+[[phase]]
+fail = "host-port"
+pick = "each"
+duration = "300s"
+gap = "300s"
+
+[expect]
+io_errors = 0
+paths_during = 1
+recovered_within = "300s"
+reconnected_by = "discoverd"
