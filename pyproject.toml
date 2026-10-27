@@ -55,8 +55,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S108"]
-# the fixtures are verbatim ONTAP tables
+# the fixtures are verbatim ONTAP and Fabric OS tables
 "tests/test_discover.py" = ["E501"]
+"tests/test_brocade.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-local-folder = ["conftest"]
